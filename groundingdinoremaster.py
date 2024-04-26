@@ -206,7 +206,7 @@ class GroundingDINO(nn.Module):
             nn.init.xavier_uniform_(proj[0].weight, gain=1)
             nn.init.constant_(proj[0].bias, 0)
 
-    def set_image_tensor(self, samples: NestedTensor):
+    def set_image_tensor(self, samples: torch.tensor):
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
         self.features, self.poss = self.backbone(samples)
@@ -241,7 +241,7 @@ class GroundingDINO(nn.Module):
         """
         # encoder texts
         tokenized = self.tokenizer(captions, padding="longest", return_tensors="pt").to(
-            samples.device
+            tensors.device
         )
         (
             text_self_attention_masks,
@@ -292,10 +292,10 @@ class GroundingDINO(nn.Module):
         }
 
         # import ipdb; ipdb.set_trace()
-        if isinstance(samples, (list, torch.Tensor)):
-            samples = nested_tensor_from_tensor_list(samples)
+        #if isinstance(samples, (list, torch.Tensor)):
+        #    samples = nested_tensor_from_tensor_list(samples)
         if not hasattr(self, 'features') or not hasattr(self, 'poss'):
-            self.set_image_tensor(samples)
+            self.set_image_tensor(tensors)
 
         srcs = []
         masks = []
@@ -311,7 +311,7 @@ class GroundingDINO(nn.Module):
                     src = self.input_proj[l](self.features[-1].tensors)
                 else:
                     src = self.input_proj[l](srcs[-1])
-                m = samples.mask
+                m = tensors.mask # could have a prblem
                 mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(torch.bool)[0]
                 pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
                 srcs.append(src)
