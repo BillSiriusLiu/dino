@@ -224,7 +224,7 @@ class GroundingDINO(nn.Module):
     def init_ref_points(self, use_num_queries):
         self.refpoint_embed = nn.Embedding(use_num_queries, self.query_dim)
 
-    def forward(self, samples: NestedTensor, captions: str):
+    def forward(self, samples: NestedTensor, input_ids: torch.tensor, attention_mask: torch.tensor, token_type_ids: torch.tensor):
         """The forward expects a NestedTensor, which consists of:
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
            - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -239,10 +239,7 @@ class GroundingDINO(nn.Module):
            - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                             dictionnaries containing the two above keys for each decoder layer.
         """
-        # encoder texts
-        tokenized = self.tokenizer(captions, padding="longest", return_tensors="pt").to(
-            samples.device
-        )
+        tokenized = {"input_ids": input_ids, "attention_mask":attention_mask, "token_type_ids":token_type_ids}
         (
             text_self_attention_masks,
             position_ids,
@@ -357,7 +354,7 @@ class GroundingDINO(nn.Module):
         '''unset_image_tensor = kw.get('unset_image_tensor', True)
         if unset_image_tensor:
             self.unset_image_tensor() ## If necessary'''
-        return out
+        return out['pred_logits'], out["pred_boxes"]
 
     @torch.jit.unused
     def _set_aux_loss(self, outputs_class, outputs_coord):

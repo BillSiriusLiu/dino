@@ -13,6 +13,7 @@ from groundingdino.util.slconfig import SLConfig
 from groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
 from groundingdino.util.vl_utils import create_positive_map_from_span
 
+from transformers import AutoTokenizer
 
 def load_model(model_config_path, model_checkpoint_path, cpu_only=False):
     args = SLConfig.fromfile(model_config_path)
@@ -54,27 +55,27 @@ if __name__ == "__main__":
     # load model
     model = load_model(config_file, checkpoint_path, cpu_only=args.cpu_only)
 
-    inputs = collections.OrderedDict({
-        'samples': NestedTensor(torch.rand(1, 3, 1, 1), torch.rand(1, 1, 1)),
-                # tensor [batch_size x 3 x H x W], mask [batch_size x H x W]
-        'targets': [{"caption":"一些文本"}, {"caption":"另一些文本"}],
-        'kw': {'caption':"一些文本"}
-    })
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+    tokenized = tokenizer("一些文本", padding="longest", return_tensors="pt")
 
-    samples = torch.tensor(inputs['samples'], dtype = torch.long)
-    targets = torch.tensor(inputs['targets'], dtype = torch.long)
-    kw = torch.tensor(inputs['kw'], dype = torch.long)
+    samples = torch.tensor(torch.rand(1, 3, 1, 1), dtype = torch.long) # tensor [batch_size x 3 x H x W], mask [batch_size x H x W]
+    input_ids = torch.tensor(tokenized['input_ids'], dtype = torch.long)
+    attention_mask = torch.tensor(tokenized['attention_mask'], dtype = torch.long)
+    token_type_ids = torch.tensor(tokenized['token_type_ids'], dtype = torch.long)
 
     torch.onnx.export(
             modle = model,
-            args = tuple(inputs.values()),
+            args = (samples, input_ids, attention_mask, token_type_ids),
             f = onnx_path, 
             export_params = True,
             opset_version = 13,
             do_constant_folding = True,
-            input_names = inputs.keys(), 
-            output_names = ['out'],
+            input_names = ['samples', 'input_ids', 'attention_mask', 'token_type_ids'],
+            output_names = ['pred_logits', 'pred_boxes'],
             dynamic_axes = {'samples': {0: 'batch_size', 2: 'H', 3: 'W'},
-                            'targets': {0:''},
-                            'kw': {0: 'batch_size'}}
+                            'input_ids': {0:'batch_size', 1:'caption_length'},
+                            'attention_mask': {0:'batch_size', 1:'caption_length'},
+                            'token_type_ids': {0:'batch_size', 1:'caption_length'},
+                            'pred_logits': {0:'batch_size', 1:'objects_cnt'}, # logits [objects x 256]
+                            'pred_boxes': {0:'batch_size', 1:'objects_cnt'}} # boxes [objects x 4]
         )
