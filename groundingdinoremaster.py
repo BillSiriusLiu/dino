@@ -224,7 +224,7 @@ class GroundingDINO(nn.Module):
     def init_ref_points(self, use_num_queries):
         self.refpoint_embed = nn.Embedding(use_num_queries, self.query_dim)
 
-    def forward(self, tensors: torch.tensor, captions: str):
+    def forward(self, samples: NestedTensor, captions: str):
         """The forward expects a NestedTensor, which consists of:
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
            - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -241,7 +241,7 @@ class GroundingDINO(nn.Module):
         """
         # encoder texts
         tokenized = self.tokenizer(captions, padding="longest", return_tensors="pt").to(
-            tensors.device
+            samples.device
         )
         (
             text_self_attention_masks,
@@ -292,10 +292,10 @@ class GroundingDINO(nn.Module):
         }
 
         # import ipdb; ipdb.set_trace()
-        #if isinstance(samples, (list, torch.Tensor)):
-        #    samples = nested_tensor_from_tensor_list(samples)
+        if isinstance(samples, (list, torch.Tensor)):
+            samples = nested_tensor_from_tensor_list(samples)
         if not hasattr(self, 'features') or not hasattr(self, 'poss'):
-            self.set_image_tensor(tensors)
+            self.set_image_tensor(samples)
 
         srcs = []
         masks = []
@@ -311,7 +311,7 @@ class GroundingDINO(nn.Module):
                     src = self.input_proj[l](self.features[-1].tensors)
                 else:
                     src = self.input_proj[l](srcs[-1])
-                m = tensors.mask # could have a prblem
+                m = samples.mask
                 mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(torch.bool)[0]
                 pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
                 srcs.append(src)
