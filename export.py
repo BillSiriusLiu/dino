@@ -52,19 +52,22 @@ if __name__ == "__main__":
     checkpoint_path = 'weights/groundingdino_swint_ogc.pth'  # change the path of the model
     onnx_path = 'groundingdinoswinb.onnx'
 
+    device = "cuda" if not cpu_only else "cpu"
+
     # load model
     model = load_model(config_file, checkpoint_path, cpu_only=args.cpu_only)
+    model = model.to(device)
 
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-    tokenized = tokenizer("一些文本", padding="longest", return_tensors="pt")
+    tokenized = tokenizer(["something to say"], padding="longest", return_tensors="pt")
 
-    samples = torch.tensor(torch.rand(1, 3, 1, 1), dtype = torch.long) # tensor [batch_size x 3 x H x W], mask [batch_size x H x W]
-    input_ids = torch.tensor(tokenized['input_ids'], dtype = torch.long)
-    attention_mask = torch.tensor(tokenized['attention_mask'], dtype = torch.long)
-    token_type_ids = torch.tensor(tokenized['token_type_ids'], dtype = torch.long)
+    samples = torch.tensor(torch.rand(1, 3, 1, 1), dtype = torch.long).to(device) # tensor [batch_size x 3 x H x W], mask [batch_size x H x W]
+    input_ids = torch.tensor(tokenized['input_ids'], dtype = torch.long).to(device)
+    attention_mask = torch.tensor(tokenized['attention_mask'], dtype = torch.long).to(device)
+    token_type_ids = torch.tensor(tokenized['token_type_ids'], dtype = torch.long).to(device)
 
     torch.onnx.export(
-            modle = model,
+            model = model,
             args = (samples, input_ids, attention_mask, token_type_ids),
             f = onnx_path, 
             export_params = True,

@@ -240,6 +240,7 @@ class GroundingDINO(nn.Module):
                             dictionnaries containing the two above keys for each decoder layer.
         """
         tokenized = {"input_ids": input_ids, "attention_mask":attention_mask, "token_type_ids":token_type_ids}
+        
         (
             text_self_attention_masks,
             position_ids,
@@ -269,7 +270,7 @@ class GroundingDINO(nn.Module):
         bert_output = self.bert(**tokenized_for_encoder)  # bs, 195, 768
 
         encoded_text = self.feat_map(bert_output["last_hidden_state"])  # bs, 195, d_model
-        text_token_mask = tokenized.attention_mask.bool()  # bs, 195
+        text_token_mask = attention_mask.bool()  # bs, 195
         # text_token_mask: True for nomask, False for mask
         # text_self_attention_masks: True for nomask, False for mask
 
