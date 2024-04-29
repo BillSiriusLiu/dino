@@ -121,7 +121,20 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
     inputs["token_type_ids"] = tokenized["token_type_ids"]
     inputs["position_ids"] = position_ids
     inputs["text_token_mask"] = text_self_attention_masks 
-        
+    
+    #onnx infernce
+    ort_session = onnxruntime.InferenceSession("grounded.onnx")
+
+    onnx_outputs = ort_session.run(
+        None,
+        inputs,
+    )
+    print(onnx_outputs)
+    # compare ONNX Runtime and PyTorch results
+    #np.testing.assert_allclose(to_numpy(logits), ort_logits, rtol=1e-03, atol=1e-05)
+    #np.testing.assert_allclose(to_numpy(boxes), ort_boxes, rtol=1e-03, atol=1e-05)
+    #print("Onnx model looks good!")
+    
     #ov inference
     request = model.create_infer_request()
     request.start_async(inputs, share_inputs=False)
@@ -129,7 +142,7 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
     outputs = {}
     outputs["logits"] = request.get_tensor("logits").data
     outputs["boxes"] = request.get_tensor("boxes").data
-        
+    
     prediction_logits_ = np.squeeze(outputs["logits"], 0) #[0]  # prediction_logits.shape = (nq, 256)
     prediction_logits_ = sig(prediction_logits_)
     prediction_boxes_ = np.squeeze(outputs["boxes"], 0) #[0]  # prediction_boxes.shape = (nq, 4)
@@ -184,7 +197,7 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
         pred_phrases = all_phrases
 
 
-    return boxes_filt, pred_phrases, logits, boxes
+    return boxes_filt, pred_phrases
 
 
 def to_numpy(tensor):
@@ -238,73 +251,15 @@ if __name__ == "__main__":
     # set the text_threshold to None if token_spans is set.
     if token_spans is not None:
         text_threshold = None
-        boxes_filt, pred_phrases, logits, boxes = get_grounding_output(
+        boxes_filt, pred_phrases = get_grounding_output(
         model, image, text_prompt, box_threshold, text_threshold, token_spans=eval(token_spans))
         print("Using token_spans. Set the text_threshold to None.")
     else:
-        boxes_filt, pred_phrases, logits, boxes = get_grounding_output(
+        boxes_filt, pred_phrases = get_grounding_output(
             model, image, text_prompt, box_threshold, text_threshold, token_spans=None)
 
-    # run model
-    ort_session = onnxruntime.InferenceSession("grounded.onnx")
-     
-    # compute ONNX Runtime output prediction
-    ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(image)}
-    ort_logits, ort_boxes = ort_session.run(None, ort_inputs)
     
-    # compare ONNX Runtime and PyTorch results
-    np.testing.assert_allclose(to_numpy(logits), ort_logits, rtol=1e-03, atol=1e-05)
-    np.testing.assert_allclose(to_numpy(boxes), ort_boxes, rtol=1e-03, atol=1e-05)
-    print("Onnx model looks good!")
 
-    # filter outputs
-    with_logits = True
-    if token_spans is None:
-        logits_filt = logits.cpu().clone()
-        boxes_filt = boxes.cpu().clone()
-        filt_mask = logits_filt.max(dim=1)[0] > box_threshold
-        logits_filt = logits_filt[filt_mask]  # num_filt, 256
-        boxes_filt = boxes_filt[filt_mask]  # num_filt, 4
-
-        # get phrase
-        tokenlizer = model.tokenizer
-        tokenized = tokenlizer(text_prompt)
-        # build pred
-        pred_phrases = []
-        for logit, box in zip(logits_filt, boxes_filt):
-            pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
-            if with_logits:
-                pred_phrases.append(pred_phrase + f"({str(logit.max().item())[:4]})")
-            else:
-                pred_phrases.append(pred_phrase)
-    else:
-        # given-phrase mode
-        positive_maps = create_positive_map_from_span(
-            model.tokenizer(text_prompt),
-            token_span=token_spans
-        ).to(image.device) # n_phrase, 256
-
-        logits_for_phrases = positive_maps @ logits.T # n_phrase, nq
-        all_logits = []
-        all_phrases = []
-        all_boxes = []
-        for (token_span, logit_phr) in zip(token_spans, logits_for_phrases):
-            # get phrase
-            phrase = ' '.join([text_prompt[_s:_e] for (_s, _e) in token_span])
-            # get mask
-            filt_mask = logit_phr > box_threshold
-            # filt box
-            all_boxes.append(boxes[filt_mask])
-            # filt logits
-            all_logits.append(logit_phr[filt_mask])
-            if with_logits:
-                logit_phr_num = logit_phr[filt_mask]
-                all_phrases.extend([phrase + f"({str(logit.item())[:4]})" for logit in logit_phr_num])
-            else:
-                all_phrases.extend([phrase for _ in range(len(filt_mask))])
-        boxes_filt = torch.cat(all_boxes, dim=0).cpu()
-        pred_phrases = all_phrases
-    
     # visualize pred
     size = image_pil.size
     pred_dict = {
