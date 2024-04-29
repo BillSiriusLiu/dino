@@ -131,7 +131,24 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
     inputs["token_type_ids"] = tokenized["token_type_ids"]
     inputs["position_ids"] = position_ids
     inputs["text_token_mask"] = text_self_attention_masks 
+
+    '''#ov inference
+    request = model.create_infer_request()
+    request.start_async(inputs, share_inputs=False)
+    request.wait()
+    outputs = {}
+    outputs["logits"] = request.get_tensor("logits").data
+    outputs["boxes"] = request.get_tensor("boxes").data
     
+    prediction_logits_ = np.squeeze(outputs["logits"], 0) #[0]  # prediction_logits.shape = (nq, 256)
+    prediction_logits_ = sig(prediction_logits_)
+    prediction_boxes_ = np.squeeze(outputs["boxes"], 0) #[0]  # prediction_boxes.shape = (nq, 4)
+    logits = torch.from_numpy(prediction_logits_)
+    boxes = torch.from_numpy(prediction_boxes_)'''
+
+    inputs["input_ids"] = to_numpy(tokenized["input_ids"])
+    inputs["attention_mask"] = to_numpy(tokenized["attention_mask"])
+    inputs["token_type_ids"] = to_numpy(tokenized["token_type_ids"])
     #onnx infernce
     ort_session = onnxruntime.InferenceSession("grounded.onnx")
 
@@ -145,19 +162,7 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
     #np.testing.assert_allclose(to_numpy(boxes), ort_boxes, rtol=1e-03, atol=1e-05)
     #print("Onnx model looks good!")
     
-    #ov inference
-    request = model.create_infer_request()
-    request.start_async(inputs, share_inputs=False)
-    request.wait()
-    outputs = {}
-    outputs["logits"] = request.get_tensor("logits").data
-    outputs["boxes"] = request.get_tensor("boxes").data
-    
-    prediction_logits_ = np.squeeze(outputs["logits"], 0) #[0]  # prediction_logits.shape = (nq, 256)
-    prediction_logits_ = sig(prediction_logits_)
-    prediction_boxes_ = np.squeeze(outputs["boxes"], 0) #[0]  # prediction_boxes.shape = (nq, 4)
-    logits = torch.from_numpy(prediction_logits_)
-    boxes = torch.from_numpy(prediction_boxes_) 
+
     
     # filter output
     if token_spans is None:
