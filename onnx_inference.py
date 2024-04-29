@@ -72,7 +72,7 @@ def load_image(image_path):
     return image_pil, image
 
 
-'''def load_model(model_config_path, model_checkpoint_path, device):
+def load_model(model_config_path, model_checkpoint_path, device):
     core = Core()
     model_read = core.read_model(model_checkpoint_path)
     model = core.compile_model(model_read, device.upper())
@@ -80,9 +80,9 @@ def load_image(image_path):
     model.tokenizer = get_tokenlizer.get_tokenlizer(args.text_encoder_type)
     model.max_text_len = args.max_text_len
     
-    return model'''
+    return model
 
-def load_model(model_config_path, model_checkpoint_path, cpu_only=False):
+'''def load_model(model_config_path, model_checkpoint_path, cpu_only=False):
     args = SLConfig.fromfile(model_config_path)
     args.device = "cuda" if not cpu_only else "cpu"
     model = build_model(args)
@@ -90,7 +90,7 @@ def load_model(model_config_path, model_checkpoint_path, cpu_only=False):
     load_res = model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
     print(load_res)
     _ = model.eval()
-    return model
+    return model'''
 
 def sig(x):
  return 1/(1 + np.exp(-x))
@@ -132,7 +132,7 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
     inputs["position_ids"] = position_ids
     inputs["text_token_mask"] = text_self_attention_masks 
 
-    '''#ov inference
+    #ov inference
     request = model.create_infer_request()
     request.start_async(inputs, share_inputs=False)
     request.wait()
@@ -143,25 +143,33 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
     prediction_logits_ = np.squeeze(outputs["logits"], 0) #[0]  # prediction_logits.shape = (nq, 256)
     prediction_logits_ = sig(prediction_logits_)
     prediction_boxes_ = np.squeeze(outputs["boxes"], 0) #[0]  # prediction_boxes.shape = (nq, 4)
-    logits = torch.from_numpy(prediction_logits_)
-    boxes = torch.from_numpy(prediction_boxes_)'''
+    ori_logits = torch.from_numpy(prediction_logits_)
+    ori_boxes = torch.from_numpy(prediction_boxes_)
 
     inputs["input_ids"] = to_numpy(tokenized["input_ids"])
     inputs["attention_mask"] = to_numpy(tokenized["attention_mask"])
+    inputs["attention_mask"] = inputs["attention_mask"].astype(bool)
     inputs["token_type_ids"] = to_numpy(tokenized["token_type_ids"])
+    inputs["position_ids"] = to_numpy(position_ids)
+    inputs["text_token_mask"] = to_numpy(text_self_attention_masks)
+    
     #onnx infernce
     ort_session = onnxruntime.InferenceSession("grounded.onnx")
 
-    onnx_outputs = ort_session.run(
+    onnx_logits, onnx_boxes = ort_session.run(
         None,
         inputs,
     )
-    print(onnx_outputs)
+    prediction_logits_ = np.squeeze(logits, 0) #[0]  # prediction_logits.shape = (nq, 256)
+    prediction_logits_ = sig(prediction_logits_)
+    prediction_boxes_ = np.squeeze(boxes, 0) #[0]  # prediction_boxes.shape = (nq, 4)
+    logits = torch.from_numpy(prediction_logits_)
+    boxes = torch.from_numpy(prediction_boxes_)
+
     # compare ONNX Runtime and PyTorch results
-    #np.testing.assert_allclose(to_numpy(logits), ort_logits, rtol=1e-03, atol=1e-05)
-    #np.testing.assert_allclose(to_numpy(boxes), ort_boxes, rtol=1e-03, atol=1e-05)
-    #print("Onnx model looks good!")
-    
+    np.testing.assert_allclose(to_numpy(ori_logits), onnx_logits, rtol=1e-03, atol=1e-05)
+    np.testing.assert_allclose(to_numpy(ori_boxes), onnx_boxes, rtol=1e-03, atol=1e-05)
+    print("Onnx model looks good!")
 
     
     # filter output
@@ -272,7 +280,6 @@ if __name__ == "__main__":
         boxes_filt, pred_phrases = get_grounding_output(
             model, image, text_prompt, box_threshold, text_threshold, token_spans=None)
 
-    
 
     # visualize pred
     size = image_pil.size
