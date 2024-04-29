@@ -72,7 +72,7 @@ def load_image(image_path):
     return image_pil, image
 
 
-def load_model(model_config_path, model_checkpoint_path, device):
+'''def load_model(model_config_path, model_checkpoint_path, device):
     core = Core()
     model_read = core.read_model(model_checkpoint_path)
     model = core.compile_model(model_read, device.upper())
@@ -80,6 +80,16 @@ def load_model(model_config_path, model_checkpoint_path, device):
     model.tokenizer = get_tokenlizer.get_tokenlizer(args.text_encoder_type)
     model.max_text_len = args.max_text_len
     
+    return model'''
+
+def load_model(model_config_path, model_checkpoint_path, cpu_only=False):
+    args = SLConfig.fromfile(model_config_path)
+    args.device = "cuda" if not cpu_only else "cpu"
+    model = build_model(args)
+    checkpoint = torch.load(model_checkpoint_path, map_location="cpu")
+    load_res = model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
+    print(load_res)
+    _ = model.eval()
     return model
 
 def sig(x):
@@ -236,14 +246,13 @@ if __name__ == "__main__":
     box_threshold = args.box_threshold
     text_threshold = args.text_threshold
     token_spans = args.token_spans
-    device = "cuda"
     
     # make dir
     os.makedirs(output_dir, exist_ok=True)
     # load image
     image_pil, image = load_image(image_path)
     # load model
-    model = load_model(config_file, checkpoint_path, device)
+    model = load_model(config_file, checkpoint_path)
 
     # visualize raw image
     #image_pil.save(os.path.join(output_dir, "raw_image.jpg"))
