@@ -71,18 +71,7 @@ def load_image(image_path):
     image, _ = transform(image_pil, None)  # 3, h, w
     return image_pil, image
 
-
-def load_model(model_config_path, model_checkpoint_path, device):
-    core = Core()
-    model_read = core.read_model(model_checkpoint_path)
-    model = core.compile_model(model_read, device.upper())
-    args = SLConfig.fromfile(model_config_path)
-    model.tokenizer = get_tokenlizer.get_tokenlizer(args.text_encoder_type)
-    model.max_text_len = args.max_text_len
-    
-    return model
-
-'''def load_model(model_config_path, model_checkpoint_path, cpu_only=False):
+def load_model(model_config_path, model_checkpoint_path, cpu_only=False):
     args = SLConfig.fromfile(model_config_path)
     args.device = "cuda" if not cpu_only else "cpu"
     model = build_model(args)
@@ -90,7 +79,7 @@ def load_model(model_config_path, model_checkpoint_path, device):
     load_res = model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
     print(load_res)
     _ = model.eval()
-    return model'''
+    return model
 
 def sig(x):
  return 1/(1 + np.exp(-x))
@@ -222,6 +211,127 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
 
     return boxes_filt, pred_phrases
 
+
+def get_grounding_output(model, image, caption, box_threshold, text_threshold=None, with_logits=True, cpu_only=False, token_spans=None):
+    assert text_threshold is not None or token_spans is not None, "text_threshould and token_spans should not be None at the same time!"
+    caption = caption.lower()
+    caption = caption.strip()
+    if not caption.endswith("."):
+        caption = caption + "."
+    device = "cuda" if not cpu_only else "cpu"
+    model = model.to(device)
+    image = image.to(device)
+    with torch.no_grad():
+        outputs = model(image[None], captions=[caption])
+    ori_logits = outputs["pred_logits"].sigmoid()[0]  # (nq, 256)
+    ori_boxes = outputs["pred_boxes"][0]  # (nq, 4)
+
+    # onnx model input formulation
+    captions = [caption]
+    # encoder texts
+    tokenized = model.tokenizer(captions, padding="longest", return_tensors="pt")
+    specical_tokens = model.tokenizer.convert_tokens_to_ids(["[CLS]", "[SEP]", ".", "?"])
+    
+    (
+        text_self_attention_masks,
+        position_ids,
+        cate_to_token_mask_list,
+    ) = generate_masks_with_special_tokens_and_transfer_map(
+        tokenized, specical_tokens, model.tokenizer)
+
+    if text_self_attention_masks.shape[1] > model.max_text_len:
+        text_self_attention_masks = text_self_attention_masks[
+            :, : model.max_text_len, : model.max_text_len]
+        
+        position_ids = position_ids[:, : model.max_text_len]
+        tokenized["input_ids"] = tokenized["input_ids"][:, : model.max_text_len]
+        tokenized["attention_mask"] = tokenized["attention_mask"][:, : model.max_text_len]
+        tokenized["token_type_ids"] = tokenized["token_type_ids"][:, : model.max_text_len]
+
+    inputs = {}
+    input_img = np.expand_dims(image, 0)
+    inputs["img"] = input_img
+    inputs["input_ids"] = tokenized["input_ids"]
+    inputs["attention_mask"] = tokenized["attention_mask"]
+    inputs["token_type_ids"] = tokenized["token_type_ids"]
+    inputs["position_ids"] = position_ids
+    inputs["text_token_mask"] = text_self_attention_masks 
+
+    inputs["input_ids"] = to_numpy(tokenized["input_ids"])
+    inputs["attention_mask"] = to_numpy(tokenized["attention_mask"])
+    inputs["attention_mask"] = inputs["attention_mask"].astype(bool)
+    inputs["token_type_ids"] = to_numpy(tokenized["token_type_ids"])
+    inputs["position_ids"] = to_numpy(position_ids)
+    inputs["text_token_mask"] = to_numpy(text_self_attention_masks)
+    
+    #onnx infernce
+    ort_session = onnxruntime.InferenceSession("grounded.onnx")
+
+    onnx_logits, onnx_boxes = ort_session.run(
+        None,
+        inputs,
+    )
+    prediction_logits_ = np.squeeze(logits, 0) #[0]  # prediction_logits.shape = (nq, 256)
+    prediction_logits_ = sig(prediction_logits_)
+    prediction_boxes_ = np.squeeze(boxes, 0) #[0]  # prediction_boxes.shape = (nq, 4)
+    logits = torch.from_numpy(prediction_logits_)
+    boxes = torch.from_numpy(prediction_boxes_)
+
+    # compare ONNX Runtime and PyTorch results
+    np.testing.assert_allclose(to_numpy(ori_logits), onnx_logits, rtol=1e-03, atol=1e-05)
+    np.testing.assert_allclose(to_numpy(ori_boxes), onnx_boxes, rtol=1e-03, atol=1e-05)
+    print("Onnx model looks good!")
+
+
+    # filter output
+    if token_spans is None:
+        logits_filt = logits.cpu().clone()
+        boxes_filt = boxes.cpu().clone()
+        filt_mask = logits_filt.max(dim=1)[0] > box_threshold
+        logits_filt = logits_filt[filt_mask]  # num_filt, 256
+        boxes_filt = boxes_filt[filt_mask]  # num_filt, 4
+
+        # get phrase
+        tokenlizer = model.tokenizer
+        tokenized = tokenlizer(caption)
+        # build pred
+        pred_phrases = []
+        for logit, box in zip(logits_filt, boxes_filt):
+            pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
+            if with_logits:
+                pred_phrases.append(pred_phrase + f"({str(logit.max().item())[:4]})")
+            else:
+                pred_phrases.append(pred_phrase)
+    else:
+        # given-phrase mode
+        positive_maps = create_positive_map_from_span(
+            model.tokenizer(text_prompt),
+            token_span=token_spans
+        ).to(image.device) # n_phrase, 256
+
+        logits_for_phrases = positive_maps @ logits.T # n_phrase, nq
+        all_logits = []
+        all_phrases = []
+        all_boxes = []
+        for (token_span, logit_phr) in zip(token_spans, logits_for_phrases):
+            # get phrase
+            phrase = ' '.join([caption[_s:_e] for (_s, _e) in token_span])
+            # get mask
+            filt_mask = logit_phr > box_threshold
+            # filt box
+            all_boxes.append(boxes[filt_mask])
+            # filt logits
+            all_logits.append(logit_phr[filt_mask])
+            if with_logits:
+                logit_phr_num = logit_phr[filt_mask]
+                all_phrases.extend([phrase + f"({str(logit.item())[:4]})" for logit in logit_phr_num])
+            else:
+                all_phrases.extend([phrase for _ in range(len(filt_mask))])
+        boxes_filt = torch.cat(all_boxes, dim=0).cpu()
+        pred_phrases = all_phrases
+
+
+    return boxes_filt, pred_phrases
 
 def to_numpy(tensor):
         return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
