@@ -138,21 +138,24 @@ def get_grounding_output(model, img, caption, box_threshold, text_threshold=None
     inputs["text_token_mask"] = to_numpy(text_self_attention_masks)
     
     #onnx infernce
-    ort_session = onnxruntime.InferenceSession("grounded.onnx")
+    ort_session = onnxruntime.InferenceSession("groundingdino.onnx")
 
     onnx_logits, onnx_boxes = ort_session.run(
         None,
         inputs,
     )
-    prediction_logits_ = np.squeeze(logits, 0) #[0]  # prediction_logits.shape = (nq, 256)
+    prediction_logits_ = np.squeeze(onnx_logits, 0) #[0]  # prediction_logits.shape = (nq, 256)
     prediction_logits_ = sig(prediction_logits_)
-    prediction_boxes_ = np.squeeze(boxes, 0) #[0]  # prediction_boxes.shape = (nq, 4)
+    prediction_boxes_ = np.squeeze(onnx_boxes, 0) #[0]  # prediction_boxes.shape = (nq, 4)
     logits = torch.from_numpy(prediction_logits_)
     boxes = torch.from_numpy(prediction_boxes_)
-
+    print(to_numpy(outputs["pred_logits"]))
+    print(onnx_logits)
+    print(to_numpy(outputs["pred_boxes"]))
+    print(onnx_boxes)
     # compare ONNX Runtime and PyTorch results
-    np.testing.assert_allclose(to_numpy(ori_logits), onnx_logits, rtol=1e-03, atol=1e-05)
-    np.testing.assert_allclose(to_numpy(ori_boxes), onnx_boxes, rtol=1e-03, atol=1e-05)
+    np.testing.assert_allclose(to_numpy(outputs["pred_logits"]), onnx_logits, rtol=1e-03, atol=1e-05)
+    np.testing.assert_allclose(to_numpy(outputs["pred_boxes"]), onnx_boxes, rtol=1e-03, atol=1e-05)
     print("Onnx model looks good!")
 
 
