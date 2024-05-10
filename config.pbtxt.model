@@ -1,0 +1,48 @@
+max_batch_size: 100
+backend: "python" # preprocess通常是依赖python进行处理
+
+input [
+    {
+        name: "img" 
+        data_type: TYPE_FP32
+        dims: [ 3, -1, -1 ]
+    },
+    {
+        name: "input_ids" 
+        data_type: TYPE_FP32
+        dims: [ -1 ]
+    },
+    {
+        name: "attention_mask" 
+        data_type: TYPE_BOOL
+        dims: [ -1 ]
+    },
+    {
+        name: "position_ids" 
+        data_type: TYPE_FP32
+        dims: [ -1 ]
+    },
+    {
+        name: "token_type_ids" 
+        data_type: TYPE_FP32
+        dims: [ -1 ]
+    },
+    {
+        name: "text_token_mask" 
+        data_type: TYPE_BOOL
+        dims: [ -1 ]
+    }
+]
+
+output [
+    {
+        name: "logits" 
+        data_type: TYPE_FP32
+        dims: [ -1, 900, 256 ]
+    },
+    {
+        name: "boxes" 
+        data_type: TYPE_FP32
+        dims: [ -1, 4 ]
+    }
+]

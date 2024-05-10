@@ -1,0 +1,48 @@
+max_batch_size: 100
+backend: "python" # preprocess通常是依赖python进行处理
+
+input [
+    {
+        name: "img"   # 输入query, 一个二维数组[["query"], ["query"]]
+        data_type: TYPE_FP32 # 字符串类型
+        dims: [ -1, 3, -1, -1 ]
+    },
+    {
+        name: "text"
+        data_type: TYPE_STRING
+        dims[ -1 ]
+    }
+]
+
+output [
+    {
+        name: "img" 
+        data_type: TYPE_FP32
+        dims: [ 3, -1, -1 ]
+    },
+    {
+        name: "input_ids"
+        data_type: TYPE_FP32
+        dims: [ -1 ]
+    },
+    {
+        name: "attention_mask" 
+        data_type: TYPE_BOOL
+        dims: [ -1 ]
+    },
+    {
+        name: "position_ids" 
+        data_type: TYPE_FP32
+        dims: [ -1 ]
+    },
+    {
+        name: "token_type_ids" 
+        data_type: TYPE_FP32
+        dims: [ -1 ]
+    },
+    {
+        name: "text_token_mask" 
+        data_type: TYPE_BOOL
+        dims: [ -1 ]
+    }
+]
